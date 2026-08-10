@@ -1,0 +1,24 @@
+# ---- 构建产物 ----
+/target
+/build
+/dist
+
+# ---- 本地文档与设计稿（不入库） ----
+/docs
+
+# ---- 本地字体源文件（线上用 Google Fonts 按需加载，无需提交） ----
+/fonts
+
+# ---- 环境变量与密钥（切勿提交 API Key） ----
+.env
+.env.*
+*.local
+
+# ---- 系统与编辑器 ----
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ---- Zed agent 配置 ----
+AGENTS.md
