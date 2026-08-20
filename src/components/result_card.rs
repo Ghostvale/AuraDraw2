@@ -128,14 +128,14 @@ pub fn result_card(
                                 <span class="ball-label">"前区"</span>
                                 {b.front
                                     .iter()
-                                    .map(|n| view! { <span class="ball ball-front">{format!("{n:02}")}</span> })
+                                    .map(|n| view! { <span class="ball ball-front">{format!("{n}")}</span> })
                                     .collect_view()}
                             </div>
                             <div class="ball-group">
                                 <span class="ball-label">"后区"</span>
                                 {b.back
                                     .iter()
-                                    .map(|n| view! { <span class="ball ball-back">{format!("{n:02}")}</span> })
+                                    .map(|n| view! { <span class="ball ball-back">{format!("{n}")}</span> })
                                     .collect_view()}
                             </div>
                         </div>

@@ -499,7 +499,7 @@ pub fn qixing_balls(resp: &SignedIntegerSequencesResponse) -> (Vec<i64>, Vec<i64
     seq_balls(resp, false)
 }
 
-/// 把前后区号码格式化为卡片内容：`前区 xx xx …   后区 xx xx …`（两位补零）。
+/// 把前后区号码格式化为卡片内容：`前区 x x …   后区 x x …`（不补零）。
 /// 返回 (主内容, 副信息)。
 fn format_balls(
     front: &[i64],
@@ -508,7 +508,7 @@ fn format_balls(
 ) -> (String, String) {
     let fmt = |nums: &[i64]| {
         nums.iter()
-            .map(|n| format!("{n:02}"))
+            .map(|n| format!("{n}"))
             .collect::<Vec<_>>()
             .join(" ")
     };
@@ -715,7 +715,7 @@ mod tests {
         assert_eq!(front, vec![5, 12, 21, 28, 33]);
         assert_eq!(back, vec![3, 11]);
         let (headline, meta) = format_lotto(&resp);
-        assert_eq!(headline, "前区 05 12 21 28 33   后区 03 11");
+        assert_eq!(headline, "前区 5 12 21 28 33   后区 3 11");
         assert!(meta.contains("序列号 42"));
     }
 
@@ -780,7 +780,7 @@ mod tests {
         assert_eq!(front, vec![3, 0, 9, 3, 7, 1]);
         assert_eq!(back, vec![11]);
         let (headline, meta) = format_qixing(&resp);
-        assert_eq!(headline, "前区 03 00 09 03 07 01   后区 11");
+        assert_eq!(headline, "前区 3 0 9 3 7 1   后区 11");
         assert!(meta.contains("序列号 43"));
     }
 
