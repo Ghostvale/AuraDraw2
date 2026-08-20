@@ -833,13 +833,6 @@ a {
     word-break: break-all;
 }
 
-/* ---------- 加载更多 ---------- */
-.load-more {
-    display: flex;
-    justify-content: center;
-    padding: 4px 0 12px;
-}
-
 /* ---------- 移动端 ---------- */
 @media (max-width: 767px) {
     .nav {

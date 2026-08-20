@@ -96,19 +96,22 @@ pub fn GamePage() -> impl IntoView {
             match outcome {
                 Ok((headline, meta, balls, badge, signature)) => {
                     set_cards.update(|cs| {
-                        cs.push(CardData {
-                            index: cs.len() + 1,
-                            headline,
-                            meta,
-                            signatures: vec![SignatureItem {
-                                label: None,
-                                value: signature,
-                            }],
-                            balls: Some(balls),
-                            badge,
-                            expanded: false,
-                            copied: false,
-                        });
+                        cs.insert(
+                            0,
+                            CardData {
+                                index: cs.len() + 1,
+                                headline,
+                                meta,
+                                signatures: vec![SignatureItem {
+                                    label: None,
+                                    value: signature,
+                                }],
+                                balls: Some(balls),
+                                badge,
+                                expanded: false,
+                                copied: false,
+                            },
+                        );
                     });
                 }
                 Err(e) => set_error.set(Some(e.to_string())),
@@ -196,7 +199,7 @@ pub fn GamePage() -> impl IntoView {
             {move || if cards.get().is_empty() {
                 view! {
                     <div class="card empty-hint">
-                        "点击「生成一注」获取一组号码\n点击「加载更多」继续生成"
+                        "点击「生成一注」获取一组号码\n新生成的一注会置顶显示"
                     </div>
                 }
                 .into_any()
@@ -213,19 +216,6 @@ pub fn GamePage() -> impl IntoView {
                 }
                 .into_any()
             }}
-
-            <div class="load-more">
-                {move || if !cards.get().is_empty() && !loading.get() {
-                    view! {
-                        <button class="btn btn-ghost" on:click=move |_| start()>
-                            "加载更多"
-                        </button>
-                    }
-                    .into_any()
-                } else {
-                    view! {}.into_any()
-                }}
-            </div>
         </section>
     }
 }

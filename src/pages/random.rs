@@ -17,7 +17,7 @@ pub fn RandomPage() -> impl IntoView {
     let (loading, set_loading) = signal(false);
     let (cards, set_cards) = signal(Vec::<CardData>::new());
 
-    // 触发生成（「生成」按钮 / 「加载更多」按钮共用）
+    // 触发生成（「生成」按钮）
     let start = move || {
         if loading.get() {
             return;
@@ -66,22 +66,25 @@ pub fn RandomPage() -> impl IntoView {
                         .map(|v| v.to_string())
                         .unwrap_or_else(|| "?".into());
                     set_cards.update(|cs| {
-                        cs.push(CardData {
-                            index: cs.len() + 1,
-                            headline: value,
-                            meta: format!(
-                                "完成 {} · 序列号 {}",
-                                resp.completion_time, resp.serial_number
-                            ),
-                            signatures: vec![SignatureItem {
-                                label: None,
-                                value: resp.signature,
-                            }],
-                            balls: None,
-                            badge: String::new(),
-                            expanded: false,
-                            copied: false,
-                        });
+                        cs.insert(
+                            0,
+                            CardData {
+                                index: cs.len() + 1,
+                                headline: value,
+                                meta: format!(
+                                    "完成 {} · 序列号 {}",
+                                    resp.completion_time, resp.serial_number
+                                ),
+                                signatures: vec![SignatureItem {
+                                    label: None,
+                                    value: resp.signature,
+                                }],
+                                balls: None,
+                                badge: String::new(),
+                                expanded: false,
+                                copied: false,
+                            },
+                        );
                     });
                 }
                 Err(e) => set_form_error.set(Some(e.to_string())),
@@ -157,7 +160,7 @@ pub fn RandomPage() -> impl IntoView {
             {move || if cards.get().is_empty() {
                 view! {
                     <div class="card empty-hint">
-                        "点击「生成」获取一个真随机数\n点击「加载更多」继续生成"
+                        "点击「生成」获取一个真随机数\n新生成的数字会置顶显示"
                     </div>
                 }
                 .into_any()
@@ -174,19 +177,6 @@ pub fn RandomPage() -> impl IntoView {
                 }
                 .into_any()
             }}
-
-            <div class="load-more">
-                {move || if !cards.get().is_empty() && !loading.get() {
-                    view! {
-                        <button class="btn btn-ghost" on:click=move |_| start()>
-                            "加载更多"
-                        </button>
-                    }
-                    .into_any()
-                } else {
-                    view! {}.into_any()
-                }}
-            </div>
         </section>
     }
 }
