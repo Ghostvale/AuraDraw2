@@ -97,7 +97,7 @@ pub fn HomePage() -> impl IntoView {
                     <span class="entry-arrow">{arrow_icon()}</span>
                     <span class="entry-icon">{ticket_icon()}</span>
                     <span class="entry-title">"游戏号码"</span>
-                    <span class="entry-desc">"体彩 · 超级大乐透 · 单注"</span>
+                    <span class="entry-desc">"体彩 · 大乐透 / 七星彩 · 单注"</span>
                 </a>
             </div>
 

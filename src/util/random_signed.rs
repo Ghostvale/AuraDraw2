@@ -124,6 +124,45 @@ fn extract_proxy_error(text: &str) -> Option<String> {
     value.get("error")?.as_str().map(|s| s.to_string())
 }
 
+/// 把 reqwest 网络错误转成可读的中文提示（区分超时 / 连接失败 / 其他）。
+/// wasm 端部分 `is_*` 方法不可用，统一用错误文本兜底匹配。
+fn describe_network_error(e: &reqwest::Error) -> anyhow::Error {
+    let msg = e.to_string();
+    if e.is_timeout()
+        || msg.contains("timeout")
+        || msg.contains("timed out")
+        || msg.contains("aborted")
+    {
+        anyhow!("网络请求超时（20 秒未响应）。请检查网络连接后重试。")
+    } else if msg.contains("Failed to fetch")
+        || msg.contains("Connection refused")
+        || msg.contains("error trying to connect")
+    {
+        anyhow!("网络请求失败：无法连接随机数服务。请检查网络连接后重试。")
+    } else {
+        anyhow!("网络请求失败：{msg}。请检查网络连接后重试。")
+    }
+}
+
+/// 截取响应体用于错误提示：压缩换行、只留前 80 字符，
+/// 避免超长 / 多行原文撑爆提示框（如网关返回整页 HTML）。
+fn preview_text(text: &str) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
+        .collect();
+    let flat = flat.trim();
+    let count = flat.chars().count();
+    if count == 0 {
+        return "响应体为空。".to_string();
+    }
+    let mut preview: String = flat.chars().take(80).collect();
+    if count > 80 {
+        preview.push('…');
+    }
+    format!("原始响应：{preview}")
+}
+
 /// 向代理端点发送 JSON-RPC 请求并解析 Signed 响应。
 ///
 /// 带 20s 超时（reqwest `RequestBuilder::timeout`，wasm 端内部用 AbortController
@@ -148,19 +187,40 @@ where
         .json(&request)
         .timeout(REQUEST_TIMEOUT)
         .send()
-        .await?;
+        .await
+        .map_err(|e| describe_network_error(&e))?;
     let status = res.status();
-    let text = res.text().await?;
+    let text = res
+        .text()
+        .await
+        .map_err(|e| anyhow!("读取随机数服务响应失败：{e}。请稍后重试。"))?;
 
+    // 代理层错误（形如 {"error": "..."}，如未配置 API Key、上游超时等）
     if let Some(msg) = extract_proxy_error(&text) {
-        return Err(anyhow!("代理错误: {}", msg));
+        return Err(anyhow!("随机数服务暂不可用：{}。请稍后重试。", msg));
     }
 
-    let rpc_res: JsonRpcResponse<SignedRandomResult<D>> = serde_json::from_str(&text)?;
+    // 非 2xx：多为部署 / 网关层问题，响应体一般不是可解析的 JSON-RPC
+    if !status.is_success() {
+        return Err(anyhow!(
+            "随机数服务返回异常状态 HTTP {}。{} 请稍后重试。",
+            status,
+            preview_text(&text)
+        ));
+    }
+
+    let rpc_res: JsonRpcResponse<SignedRandomResult<D>> =
+        serde_json::from_str(&text).map_err(|_| {
+            anyhow!(
+                "随机数服务响应无法解析（不是预期的 JSON 格式，可能是服务故障或网络代理拦截）。\
+                 {} 请稍后重试。",
+                preview_text(&text)
+            )
+        })?;
 
     if let Some(error) = rpc_res.error {
         return Err(anyhow!(
-            "RANDOM.ORG API Error [{}]: {}",
+            "RANDOM.ORG API 错误 [{}]：{}",
             error.code,
             error.message
         ));
@@ -397,21 +457,55 @@ pub async fn generate_signed_lotto() -> Result<SignedIntegerSequencesResponse> {
     .await
 }
 
-/// 把大乐透响应拆分为 (前区, 后区) 号码数组，供卡片号码球渲染。
+/// 体彩七星彩 · 单注。
 ///
-/// `n=2` 的响应 `data` 为两条序列：`data[0]` = 前区 5 个，`data[1]` = 后区 2 个。
-pub fn lotto_balls(resp: &SignedIntegerSequencesResponse) -> (Vec<i64>, Vec<i64>) {
-    let to_i64 =
-        |nums: &[serde_json::Value]| nums.iter().map(|v| v.as_i64().unwrap_or(0)).collect();
+/// 规则：前区 6 位（每位 0–9，可重复、按位排列，位置敏感）+ 后区 1 个（0–14）。
+/// 与 `generate_signed_lotto` 同构：`n=2`、`length=[6,1]`；前区允许重复故 `replacement=true`。
+pub async fn generate_signed_qixing() -> Result<SignedIntegerSequencesResponse> {
+    generate_signed_integer_sequences(
+        2,
+        serde_json::json!([6, 1]),
+        serde_json::json!([0, 0]),
+        serde_json::json!([9, 14]),
+        Some(serde_json::json!([true, true])),
+    )
+    .await
+}
+
+/// 把「序列」接口响应拆分为 (前区, 后区) 号码数组。
+///
+/// `n=2` 的响应 `data` 为两条序列：`data[0]` = 前区，`data[1]` = 后区。
+/// `sort` 为 `true` 时（大乐透）前后区各升序排序；七星彩按位排列、顺序敏感，传 `false`。
+fn seq_balls(resp: &SignedIntegerSequencesResponse, sort: bool) -> (Vec<i64>, Vec<i64>) {
+    let to_i64 = |nums: &[serde_json::Value]| {
+        let mut v: Vec<i64> = nums.iter().map(|v| v.as_i64().unwrap_or(0)).collect();
+        if sort {
+            v.sort_unstable();
+        }
+        v
+    };
     let front = resp.data.first().cloned().unwrap_or_default();
     let back = resp.data.get(1).cloned().unwrap_or_default();
     (to_i64(&front), to_i64(&back))
 }
 
-/// 把大乐透响应格式化为卡片内容：前区 5 个 + 后区 2 个，两位补零。
+/// 把大乐透响应拆分为 (前区, 后区) 号码数组，供卡片号码球渲染；前后区各升序排序。
+pub fn lotto_balls(resp: &SignedIntegerSequencesResponse) -> (Vec<i64>, Vec<i64>) {
+    seq_balls(resp, true)
+}
+
+/// 把七星彩响应拆分为 (前区, 后区) 号码数组；按位排列，顺序敏感，不排序。
+pub fn qixing_balls(resp: &SignedIntegerSequencesResponse) -> (Vec<i64>, Vec<i64>) {
+    seq_balls(resp, false)
+}
+
+/// 把前后区号码格式化为卡片内容：`前区 xx xx …   后区 xx xx …`（两位补零）。
 /// 返回 (主内容, 副信息)。
-pub fn format_lotto(resp: &SignedIntegerSequencesResponse) -> (String, String) {
-    let (front, back) = lotto_balls(resp);
+fn format_balls(
+    front: &[i64],
+    back: &[i64],
+    resp: &SignedIntegerSequencesResponse,
+) -> (String, String) {
     let fmt = |nums: &[i64]| {
         nums.iter()
             .map(|n| format!("{n:02}"))
@@ -419,12 +513,24 @@ pub fn format_lotto(resp: &SignedIntegerSequencesResponse) -> (String, String) {
             .join(" ")
     };
 
-    let headline = format!("前区 {}   后区 {}", fmt(&front), fmt(&back));
+    let headline = format!("前区 {}   后区 {}", fmt(front), fmt(back));
     let meta = format!(
         "完成 {} · 序列号 {}",
         resp.completion_time, resp.serial_number
     );
     (headline, meta)
+}
+
+/// 把大乐透响应格式化为卡片内容（前后区已排序）。返回 (主内容, 副信息)。
+pub fn format_lotto(resp: &SignedIntegerSequencesResponse) -> (String, String) {
+    let (front, back) = lotto_balls(resp);
+    format_balls(&front, &back, resp)
+}
+
+/// 把七星彩响应格式化为卡片内容（按位排列，不排序）。返回 (主内容, 副信息)。
+pub fn format_qixing(resp: &SignedIntegerSequencesResponse) -> (String, String) {
+    let (front, back) = qixing_balls(resp);
+    format_balls(&front, &back, resp)
 }
 
 #[cfg(test)]
@@ -588,11 +694,12 @@ mod tests {
 
     #[test]
     fn test_format_lotto() {
-        // n=2 的响应：data 为两条序列（前区 5 个 + 后区 2 个）
+        // n=2 的响应：data 为两条序列（前区 5 个 + 后区 2 个），
+        // 输入乱序，验证拆分后前后区各自升序排序。
         let resp = SignedIntegerSequencesResponse {
             data: vec![
-                vec![json!(5), json!(12), json!(21), json!(28), json!(33)],
-                vec![json!(3), json!(11)],
+                vec![json!(33), json!(5), json!(28), json!(12), json!(21)],
+                vec![json!(11), json!(3)],
             ],
             completion_time: "2026-08-09 12:00:00Z".into(),
             serial_number: 42,
@@ -629,5 +736,64 @@ mod tests {
         };
         let (headline, _) = format_lotto(&resp);
         assert_eq!(headline, "前区    后区 ");
+    }
+
+    /// 验证七星彩固定参数拼装正确（前区 6 位 0–9 可重复 + 后区 1 个 0–14）。
+    #[test]
+    fn test_qixing_params() {
+        let params = SignedIntegerSequencesParams {
+            n: 2,
+            length: serde_json::json!([6, 1]),
+            min: serde_json::json!([0, 0]),
+            max: serde_json::json!([9, 14]),
+            replacement: Some(serde_json::json!([true, true])),
+            base: None,
+            pregenerated_randomization: None,
+        };
+        let body = serde_json::to_value(&params).unwrap();
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["length"], serde_json::json!([6, 1]));
+        assert_eq!(body["min"], serde_json::json!([0, 0]));
+        assert_eq!(body["max"], serde_json::json!([9, 14]));
+        assert_eq!(body["replacement"], serde_json::json!([true, true]));
+    }
+
+    /// 七星彩按位排列：顺序敏感、不排序；重复数字原样保留。
+    #[test]
+    fn test_qixing_balls_keep_order() {
+        let resp = SignedIntegerSequencesResponse {
+            data: vec![
+                vec![json!(3), json!(0), json!(9), json!(3), json!(7), json!(1)],
+                vec![json!(11)],
+            ],
+            completion_time: "2026-08-09 12:00:00Z".into(),
+            serial_number: 43,
+            hashed_api_key: "hash".into(),
+            signature: "sig".into(),
+            cost: 0.0,
+            bits_used: 0,
+            bits_left: 0,
+            requests_left: 0,
+            advisory_delay: 0,
+        };
+        let (front, back) = qixing_balls(&resp);
+        assert_eq!(front, vec![3, 0, 9, 3, 7, 1]);
+        assert_eq!(back, vec![11]);
+        let (headline, meta) = format_qixing(&resp);
+        assert_eq!(headline, "前区 03 00 09 03 07 01   后区 11");
+        assert!(meta.contains("序列号 43"));
+    }
+
+    /// 错误提示的响应体预览：空体、短文本、超长文本截断。
+    #[test]
+    fn test_preview_text() {
+        assert_eq!(preview_text(""), "响应体为空。");
+        assert!(preview_text("not json").starts_with("原始响应：not json"));
+        // 换行压缩 + 截断到 80 字符并补省略号
+        let long = format!("line1\n{}", "a".repeat(200));
+        let p = preview_text(&long);
+        assert!(p.starts_with("原始响应：line1 aaaa"));
+        assert!(p.ends_with('…'));
+        assert!(p.len() < 130);
     }
 }

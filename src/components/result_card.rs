@@ -1,6 +1,7 @@
 //! 结果卡片：主内容 + 副信息 + 右下角 signature（截断 / 展开 / 复制）。
 //!
-//! 随机数页展示大号数字；游戏页展示大乐透号码球（前区 / 后区）。
+//! 随机数页展示大号数字；游戏页展示号码球（前区 / 后区，大乐透 / 七星彩），
+//! 卡片头部带游戏标识徽章。
 //! 所有信号读取均用 `.get(i)` 安全访问：若视图短暂落后于数据变化，
 //! 渲染空内容而不是 panic。
 
@@ -31,14 +32,16 @@ pub struct LottoBalls {
 pub struct CardData {
     /// 卡片序号（第几张）。
     pub index: usize,
-    /// 主内容（大号展示；大乐透页为格式化文本兜底，实际渲染号码球）。
+    /// 主内容（大号展示；游戏页为格式化文本兜底，实际渲染号码球）。
     pub headline: String,
     /// 副信息（完成时间 / 序列号）。
     pub meta: String,
     /// 签名列表（右下角展示第一条，展开后展示全部）。
     pub signatures: Vec<SignatureItem>,
-    /// 大乐透号码球；`None` 时按普通文本渲染 `headline`。
+    /// 号码球（前区 / 后区）；`None` 时按普通文本渲染 `headline`。
     pub balls: Option<LottoBalls>,
+    /// 卡片对应的游戏标识（如「超级大乐透」「七星彩」）；随机数卡片为空字符串。
+    pub badge: String,
     /// 是否已展开完整签名。
     pub expanded: bool,
     /// 是否已复制签名。
@@ -90,15 +93,29 @@ pub fn result_card(
     view! {
         <div class="card result">
             <div class="card-head">
-                <span class="card-index">
-                    {move || cards.get().get(i).map(|c| format!("#{}", c.index)).unwrap_or_default()}
+                <span class="card-tags">
+                    {move || cards.get().get(i).map(|c| {
+                        let is_qixing = c.badge == "七星彩";
+                        if c.badge.is_empty() {
+                            return view! {}.into_any();
+                        }
+                        view! {
+                            <span class="card-tag" class:qixing=is_qixing>
+                                {c.badge.clone()}
+                            </span>
+                        }
+                        .into_any()
+                    })}
+                    <span class="card-index">
+                        {move || cards.get().get(i).map(|c| format!("#{}", c.index)).unwrap_or_default()}
+                    </span>
                 </span>
                 <span>
                     {move || cards.get().get(i).map(|c| c.meta.clone()).unwrap_or_default()}
                 </span>
             </div>
 
-            // 主内容：大乐透号码球 / 普通大号数字
+            // 主内容：号码球 / 普通大号数字
             {move || {
                 let Some(card) = cards.get().get(i).cloned() else {
                     return view! {}.into_any();

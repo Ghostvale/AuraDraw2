@@ -78,6 +78,7 @@ pub fn RandomPage() -> impl IntoView {
                                 value: resp.signature,
                             }],
                             balls: None,
+                            badge: String::new(),
                             expanded: false,
                             copied: false,
                         });

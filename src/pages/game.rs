@@ -1,13 +1,33 @@
-//! 功能二：游戏号码。v1 支持体彩超级大乐透 · 单注。
+//! 功能二：游戏号码。v1 支持体彩超级大乐透 / 七星彩 · 单注。
 //!
-//! 一次点击 = 一注 = 一张卡片（前区 5 个 1–35 不重复 + 后区 2 个 1–12 不重复）。
+//! 一次点击 = 一注 = 一张卡片：
+//! - 大乐透：前区 5 个 1–35 不重复 + 后区 2 个 1–12 不重复（展示时前后区各升序排序）；
+//! - 七星彩：前区 6 位 0–9（可重复、按位排列）+ 后区 1 个 0–14。
 //! 只通过按钮触发生成，不做滚动自动加载。
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use anyhow::Result;
+
 use crate::components::result_card::{CardData, LottoBalls, SignatureItem, result_card};
-use crate::util::random_signed::{format_lotto, generate_signed_lotto, lotto_balls};
+use crate::util::random_signed::{
+    format_lotto, format_qixing, generate_signed_lotto, generate_signed_qixing, lotto_balls,
+    qixing_balls,
+};
+
+/// 游戏类型选项（值同时作为卡片徽章文本）。
+const GAME_LOTTO: &str = "体彩 · 超级大乐透";
+const GAME_QIXING: &str = "体彩 · 七星彩";
+
+/// 各游戏的规则说明（表单下方提示）。
+fn game_rule_desc(game: &str) -> &'static str {
+    match game {
+        GAME_LOTTO => "前区 5 个（1–35）不重复 · 后区 2 个（1–12）不重复",
+        GAME_QIXING => "前区 6 位（0–9，可重复、按位排列）· 后区 1 个（0–14）",
+        _ => "",
+    }
+}
 
 /// 下拉箭头图标（select 右侧，替代浏览器默认样式）。
 fn chevron_icon() -> impl IntoView {
@@ -29,7 +49,7 @@ fn chevron_icon() -> impl IntoView {
 
 #[allow(non_snake_case)]
 pub fn GamePage() -> impl IntoView {
-    let (_game_type, set_game_type) = signal(String::from("体彩 · 超级大乐透"));
+    let (game_type, set_game_type) = signal(String::from(GAME_LOTTO));
     let (_variant, set_variant) = signal(String::from("单注"));
     let (error, set_error) = signal(None::<String>);
     let (loading, set_loading) = signal(false);
@@ -39,15 +59,42 @@ pub fn GamePage() -> impl IntoView {
         if loading.get() {
             return;
         }
+        let game = game_type.get();
         set_loading.set(true);
         set_error.set(None);
 
         let (set_loading, set_cards, set_error) = (set_loading, set_cards, set_error);
         spawn_local(async move {
-            match generate_signed_lotto().await {
-                Ok(resp) => {
-                    let (headline, meta) = format_lotto(&resp);
+            // 两个游戏响应结构一致（SignedIntegerSequencesResponse），仅参数与排序不同。
+            let outcome: Result<(String, String, LottoBalls, String, String)> = match game.as_str()
+            {
+                GAME_LOTTO => generate_signed_lotto().await.map(|resp| {
                     let (front, back) = lotto_balls(&resp);
+                    let (headline, meta) = format_lotto(&resp);
+                    (
+                        headline,
+                        meta,
+                        LottoBalls { front, back },
+                        String::from("超级大乐透"),
+                        resp.signature,
+                    )
+                }),
+                GAME_QIXING => generate_signed_qixing().await.map(|resp| {
+                    let (front, back) = qixing_balls(&resp);
+                    let (headline, meta) = format_qixing(&resp);
+                    (
+                        headline,
+                        meta,
+                        LottoBalls { front, back },
+                        String::from("七星彩"),
+                        resp.signature,
+                    )
+                }),
+                _ => unreachable!("未知游戏类型: {game}"),
+            };
+
+            match outcome {
+                Ok((headline, meta, balls, badge, signature)) => {
                     set_cards.update(|cs| {
                         cs.push(CardData {
                             index: cs.len() + 1,
@@ -55,9 +102,10 @@ pub fn GamePage() -> impl IntoView {
                             meta,
                             signatures: vec![SignatureItem {
                                 label: None,
-                                value: resp.signature,
+                                value: signature,
                             }],
-                            balls: Some(LottoBalls { front, back }),
+                            balls: Some(balls),
+                            badge,
                             expanded: false,
                             copied: false,
                         });
@@ -73,7 +121,13 @@ pub fn GamePage() -> impl IntoView {
         <section class="page-inner">
             <div class="page-head">
                 <h1 class="page-title">"游戏号码"</h1>
-                <p class="page-sub">"体彩 · 超级大乐透 · 单注 · 签名可验证"</p>
+                <p class="page-sub">
+                    {move || match game_type.get().as_str() {
+                        GAME_LOTTO => "体彩 · 超级大乐透 · 单注 · 签名可验证",
+                        GAME_QIXING => "体彩 · 七星彩 · 单注 · 签名可验证",
+                        _ => "",
+                    }}
+                </p>
             </div>
 
             <div class="card form">
@@ -85,7 +139,8 @@ pub fn GamePage() -> impl IntoView {
                                 class="input"
                                 on:change=move |ev| set_game_type.set(event_target_value(&ev))
                             >
-                                <option value="体彩 · 超级大乐透" selected="true">"体彩 · 超级大乐透"</option>
+                                <option value=GAME_LOTTO selected="true">{GAME_LOTTO}</option>
+                                <option value=GAME_QIXING>{GAME_QIXING}</option>
                             </select>
                             {chevron_icon()}
                         </div>
@@ -134,7 +189,7 @@ pub fn GamePage() -> impl IntoView {
                         view! {}.into_any()
                     }}
                 </div>
-                <p class="page-sub">"前区 5 个（1–35）不重复 · 后区 2 个（1–12）不重复"</p>
+                <p class="page-sub">{move || game_rule_desc(&game_type.get())}</p>
                 {move || error.get().map(|e| view! { <p class="form-error">{e}</p> }.into_any())}
             </div>
 
